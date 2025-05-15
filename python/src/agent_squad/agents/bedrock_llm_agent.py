@@ -32,6 +32,7 @@ class BedrockLLMAgentOptions(AgentOptions):
     tool_config: dict[str, Any] | AgentTools | None = None
     custom_system_prompt: Optional[dict[str, Any]] = None
     client: Optional[Any] = None
+    reasoning_config: Optional[dict[str, Any]] = None
 
 
 class BedrockLLMAgent(Agent):
@@ -69,6 +70,7 @@ class BedrockLLMAgent(Agent):
             self.inference_config = default_inference_config
 
         self.guardrail_config: Optional[dict[str, str]] = options.guardrail_config or {}
+        self.reasoning_config: Optional[dict[str, Any]] = options.reasoning_config or {}
         self.retriever: Optional[Retriever] = options.retriever
         self.tool_config: Optional[dict[str, Any]] = options.tool_config
 
@@ -147,6 +149,9 @@ class BedrockLLMAgent(Agent):
 
         if self.guardrail_config:
             command["guardrailConfig"] = self.guardrail_config
+            
+        if self.reasoning_config:
+            command["additionalModelRequestFields"] = self.reasoning_config
 
         if self.tool_config:
             command["toolConfig"] = self._prepare_tool_config()
