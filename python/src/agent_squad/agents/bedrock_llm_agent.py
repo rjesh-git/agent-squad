@@ -69,8 +69,13 @@ class BedrockLLMAgent(Agent):
         else:
             self.inference_config = default_inference_config
 
-        self.guardrail_config: Optional[dict[str, str]] = options.guardrail_config or {}
         self.reasoning_config: Optional[dict[str, Any]] = options.reasoning_config or {}
+        # if thinking is enabled, unset top_p
+        if self.reasoning_config.get("thinking", {}).get("type") == "enabled":
+            del self.inference_config["topP"]
+
+        self.guardrail_config: Optional[dict[str, str]] = options.guardrail_config or {}
+        
         self.retriever: Optional[Retriever] = options.retriever
         self.tool_config: Optional[dict[str, Any]] = options.tool_config
 
@@ -135,16 +140,21 @@ class BedrockLLMAgent(Agent):
     ) -> dict:
         """Build the conversation command with all necessary configurations."""
 
+        inference_config = {
+            "maxTokens": self.inference_config.get("maxTokens"),
+            "temperature": self.inference_config.get("temperature"),
+            "stopSequences": self.inference_config.get("stopSequences"),
+        }
+        
+        # Only add topP if it exists in the inference_config
+        if "topP" in self.inference_config:
+            inference_config["topP"] = self.inference_config["topP"]
+            
         command = {
             "modelId": self.model_id,
             "messages": conversation_to_dict(conversation),
             "system": [{"text": system_prompt}],
-            "inferenceConfig": {
-                "maxTokens": self.inference_config.get("maxTokens"),
-                "temperature": self.inference_config.get("temperature"),
-                "topP": self.inference_config.get("topP"),
-                "stopSequences": self.inference_config.get("stopSequences"),
-            },
+            "inferenceConfig": inference_config,
         }
 
         if self.guardrail_config:
