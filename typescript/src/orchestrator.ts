@@ -1,6 +1,6 @@
 import { AgentOverlapAnalyzer } from "./agentOverlapAnalyzer";
 import { Agent, AgentResponse } from "./agents/agent";
-import { ClassifierResult } from './classifiers/classifier';
+import { ClassifierResult } from "./classifiers/classifier";
 import { ChatStorage } from "./storage/chatStorage";
 import { InMemoryChatStorage } from "./storage/memoryChatStorage";
 import { AccumulatorTransform } from "./utils/helpers";
@@ -113,7 +113,8 @@ export const DEFAULT_CONFIG: AgentSquadConfig = {
   CLASSIFICATION_ERROR_MESSAGE: undefined,
 
   /** Default message when no agent is selected to handle the request */
-  NO_SELECTED_AGENT_MESSAGE: "I'm sorry, I couldn't determine how to handle your request. Could you please rephrase it?",
+  NO_SELECTED_AGENT_MESSAGE:
+    "I'm sorry, I couldn't determine how to handle your request. Could you please rephrase it?",
 
   /** Default general error message for routing errors */
   GENERAL_ROUTING_ERROR_MSG_MESSAGE: undefined,
@@ -176,9 +177,8 @@ export interface RequestMetadata {
 
   // Optional: Indicates if classification failed during processing
   // Only present if an error occurred during classification
-  errorType?: 'classification_failed';
+  errorType?: "classification_failed";
 }
-
 
 export class AgentSquad {
   private config: AgentSquadConfig;
@@ -214,11 +214,13 @@ export class AgentSquad {
       USE_DEFAULT_AGENT_IF_NONE_IDENTIFIED:
         options.config?.USE_DEFAULT_AGENT_IF_NONE_IDENTIFIED ??
         DEFAULT_CONFIG.USE_DEFAULT_AGENT_IF_NONE_IDENTIFIED,
-      CLASSIFICATION_ERROR_MESSAGE: options.config?.CLASSIFICATION_ERROR_MESSAGE,
+      CLASSIFICATION_ERROR_MESSAGE:
+        options.config?.CLASSIFICATION_ERROR_MESSAGE,
       NO_SELECTED_AGENT_MESSAGE:
         options.config?.NO_SELECTED_AGENT_MESSAGE ??
         DEFAULT_CONFIG.NO_SELECTED_AGENT_MESSAGE,
-      GENERAL_ROUTING_ERROR_MSG_MESSAGE: options.config?.GENERAL_ROUTING_ERROR_MSG_MESSAGE
+      GENERAL_ROUTING_ERROR_MSG_MESSAGE:
+        options.config?.GENERAL_ROUTING_ERROR_MSG_MESSAGE,
     };
 
     this.executionTimes = new Map();
@@ -229,7 +231,6 @@ export class AgentSquad {
     this.classifier = options.classifier || new BedrockClassifier();
 
     this.defaultAgent = options.defaultAgent;
-
   }
 
   analyzeAgentOverlap(): void {
@@ -313,12 +314,16 @@ export class AgentSquad {
         }
 
         let responseText = "No response content";
-        if (
-          response.content &&
-          response.content.length > 0 &&
-          response.content[0].text
-        ) {
-          responseText = response.content[0].text;
+        if (response.content && response.content.length > 0) {
+          const contentParts: string[] = [];
+          for (const content of response.content) {
+            if (content.reasoningContent?.reasoningText?.text) {
+              contentParts.push(`<thinking>${content.reasoningContent.reasoningText.text}</thinking>\n`);
+            } else if (content.text) {
+              contentParts.push(content.text);
+            }
+          }
+          responseText = contentParts.join(' ');
         }
 
         return responseText;
@@ -335,7 +340,8 @@ export class AgentSquad {
     sessionId: string
   ): Promise<ClassifierResult> {
     try {
-      const chatHistory = await this.storage.fetchAllChats(userId, sessionId) || [];
+      const chatHistory =
+        (await this.storage.fetchAllChats(userId, sessionId)) || [];
       const classifierResult = await this.measureExecutionTime(
         "Classifying user intent",
         () => this.classifier.classify(userInput, chatHistory)
@@ -343,7 +349,11 @@ export class AgentSquad {
 
       this.logger.printIntent(userInput, classifierResult);
 
-      if (!classifierResult.selectedAgent && this.config.USE_DEFAULT_AGENT_IF_NONE_IDENTIFIED && this.defaultAgent) {
+      if (
+        !classifierResult.selectedAgent &&
+        this.config.USE_DEFAULT_AGENT_IF_NONE_IDENTIFIED &&
+        this.defaultAgent
+      ) {
         const fallbackResult = this.getFallbackResult();
         this.logger.info("Using default agent as no agent was selected");
         return fallbackResult;
@@ -372,7 +382,13 @@ export class AgentSquad {
         additionalParams,
       });
 
-      const metadata = this.createMetadata(classifierResult, userInput, userId, sessionId, additionalParams);
+      const metadata = this.createMetadata(
+        classifierResult,
+        userInput,
+        userId,
+        sessionId,
+        additionalParams
+      );
 
       if (this.isAsyncIterable(agentResponse)) {
         const accumulatorTransform = new AccumulatorTransform();
@@ -423,20 +439,42 @@ export class AgentSquad {
     this.executionTimes = new Map();
 
     try {
-      const classifierResult = await this.classifyRequest(userInput, userId, sessionId);
+      const classifierResult = await this.classifyRequest(
+        userInput,
+        userId,
+        sessionId
+      );
 
       if (!classifierResult.selectedAgent) {
         return {
-          metadata: this.createMetadata(classifierResult, userInput, userId, sessionId, additionalParams),
+          metadata: this.createMetadata(
+            classifierResult,
+            userInput,
+            userId,
+            sessionId,
+            additionalParams
+          ),
           output: this.config.NO_SELECTED_AGENT_MESSAGE!,
           streaming: false,
         };
       }
 
-      return await this.agentProcessRequest(userInput, userId, sessionId, classifierResult, additionalParams);
+      return await this.agentProcessRequest(
+        userInput,
+        userId,
+        sessionId,
+        classifierResult,
+        additionalParams
+      );
     } catch (error) {
       return {
-        metadata: this.createMetadata(null, userInput, userId, sessionId, additionalParams),
+        metadata: this.createMetadata(
+          null,
+          userInput,
+          userId,
+          sessionId,
+          additionalParams
+        ),
         output: this.config.GENERAL_ROUTING_ERROR_MSG_MESSAGE || String(error),
         streaming: false,
       };
@@ -444,7 +482,6 @@ export class AgentSquad {
       this.logger.printExecutionTimes(this.executionTimes);
     }
   }
-
 
   private async processStreamInBackground(
     agentResponse: AsyncIterable<any>,
@@ -474,20 +511,16 @@ export class AgentSquad {
 
       const fullResponse = accumulatorTransform.getAccumulatedData();
       if (fullResponse) {
-
-
-
-      if (agent.saveChat) {
-        await saveConversationExchange(
-          userInput,
-          fullResponse,
-          this.storage,
-          userId,
-          sessionId,
-          agent.id
-        );
-      }
-
+        if (agent.saveChat) {
+          await saveConversationExchange(
+            userInput,
+            fullResponse,
+            this.storage,
+            userId,
+            sessionId,
+            agent.id
+          );
+        }
       } else {
         this.logger.warn("No data accumulated, messages not saved");
       }
