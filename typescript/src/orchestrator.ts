@@ -180,6 +180,11 @@ export interface RequestMetadata {
   errorType?: "classification_failed";
 }
 
+export type ThinkingResponse = {
+  content: string;
+  thinking: string;
+}
+
 export class AgentSquad {
   private config: AgentSquadConfig;
   private storage: ChatStorage;
@@ -270,7 +275,7 @@ export class AgentSquad {
 
   async dispatchToAgent(
     params: DispatchToAgentsParams
-  ): Promise<string | AsyncIterable<any>> {
+  ): Promise<string | AsyncIterable<any> | ThinkingResponse> {
     const {
       userInput,
       userId,
@@ -315,17 +320,25 @@ export class AgentSquad {
 
         let responseText = "No response content";
         if (response.content && response.content.length > 0) {
+          const thinkingParts: string[] = [];
           const contentParts: string[] = [];
+
           for (const content of response.content) {
             if (content.reasoningContent?.reasoningText?.text) {
-              contentParts.push(`<thinking>${content.reasoningContent.reasoningText.text}</thinking>\n`);
-            } else if (content.text) {
+              thinkingParts.push(content.reasoningContent.reasoningText.text);
+            }
+            if (content.text) {
               contentParts.push(content.text);
             }
           }
-          responseText = contentParts.join(' ');
-        }
 
+          if (thinkingParts.length > 0) {
+            return {
+              content: contentParts.join(''), thinking: thinkingParts.join('')
+            }
+          }
+          responseText = contentParts.join("");
+        }
         return responseText;
       }
     } catch (error) {
@@ -407,10 +420,11 @@ export class AgentSquad {
         };
       }
 
+      const response: string = (agentResponse as ThinkingResponse).content || agentResponse as string;
       if (classifierResult?.selectedAgent.saveChat) {
         await saveConversationExchange(
           userInput,
-          agentResponse,
+          response,
           this.storage,
           userId,
           sessionId,
@@ -421,8 +435,9 @@ export class AgentSquad {
 
       return {
         metadata,
-        output: agentResponse,
+        output: response,
         streaming: false,
+        thinking: (agentResponse as ThinkingResponse).thinking
       };
     } catch (error) {
       this.logger.error("Error during agent processing:", error);

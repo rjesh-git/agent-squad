@@ -422,7 +422,6 @@ export class BedrockLLMAgent extends Agent {
     let toolUse = false;
     let recursions =
       this.toolConfig?.toolMaxRecursions || this.defaultMaxRecursions;
-    //let thinking = "";
 
     try {
       do {
