@@ -327,6 +327,9 @@ export class AgentSquad {
             if (content.reasoningContent?.reasoningText?.text) {
               thinkingParts.push(content.reasoningContent.reasoningText.text);
             }
+            if (content?.thinking) {
+              thinkingParts.push(content.thinking);
+            }
             if (content.text) {
               contentParts.push(content.text);
             }

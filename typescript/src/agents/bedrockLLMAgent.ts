@@ -311,7 +311,7 @@ export class BedrockLLMAgent extends Agent {
           maxTokens: this.inferenceConfig.maxTokens,
           temperature: this.inferenceConfig.temperature,
           stopSequences: this.inferenceConfig.stopSequences,
-          ...(this.reasoningConfig?.thinking.type === "enable" && {
+          ...(this.reasoningConfig?.thinking.type !== "enable" && {
             topP: this.inferenceConfig.topP,
           }),
         },
