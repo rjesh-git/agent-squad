@@ -1,11 +1,13 @@
 import uuid
 import asyncio
+from typing import Any
+import nest_asyncio
 
 
 from agent_squad.orchestrator import AgentSquad, AgentSquadConfig
 from agent_squad.agents import (
-    BedrockLLMAgent,
-    BedrockLLMAgentOptions,
+    AnthropicAgent,
+    AnthropicAgentOptions,
     AgentResponse,
     AgentCallbacks,
 )
@@ -28,7 +30,7 @@ class LLMAgentCallbacks(AgentCallbacks):
                 self.think_state = "finished"
             print(token, end="", flush=True)
 
-    async def on_llm_end(self, **kwargs) -> None:
+    async def on_llm_end(self, name: str, output: Any, **kwargs) -> None:
         print("\n----.:: End ::.----\n")
 
 
@@ -47,17 +49,18 @@ orchestrator = AgentSquad(
 )
 
 # Add some agents
-tech_agent = BedrockLLMAgent(
-    BedrockLLMAgentOptions(
+tech_agent = AnthropicAgent(
+    AnthropicAgentOptions(
         name="Tech Agent",
-        streaming=False,
+        api_key="REDACTED",
+        streaming=True,
         description="Specializes in technology areas including software development, hardware, AI, \
         cybersecurity, blockchain, cloud computing, emerging tech innovations, and pricing/costs \
         related to technology products and services.",
-        model_id="us.anthropic.claude-3-7-sonnet-20250219-v1:0",
+        model_id="claude-3-7-sonnet-20250219",
         callbacks=LLMAgentCallbacks(),
-        inference_config={"maxTokens": 2500, "temperature": 1},
-        reasoning_config={"thinking": {"type": "enabled", "budget_tokens": 2000}},
+        inference_config={"maxTokens": 2500, "temperature": 1, "topP": 0.95},
+        thinking={"type": "enabled", "budget_tokens": 2000},
     )
 )
 orchestrator.add_agent(tech_agent)
@@ -72,12 +75,17 @@ async def handle_request(_orchestrator: AgentSquad, _user_input: str, _user_id: 
         print(f"Selected Agent: {response.metadata.agent_name}")
         if isinstance(response, AgentResponse) and response.streaming is False:
             # Handle regular response
-            print(f"Response: {response.output}")
             if isinstance(response.output, str):
-                print(response.output)
+                print(f"string:\n\n{response.output}\n\n")
             elif isinstance(response.output, ConversationMessage):
-                print(response.output.content)
-                # print(response.output.content[0].get("text"))
+                # Handle different content types in the response
+                for content_block in response.output.content:
+                    if hasattr(content_block, "thinking"):
+                        print("\nThinking:\n---------\n")
+                        print(content_block.thinking)
+                    elif hasattr(content_block, "text"):
+                        print("\nResponse:\n---------\n")
+                        print(content_block.text)
         return response
     except Exception as e:
         print(f"Error in handle_request: {str(e)}")
@@ -85,8 +93,6 @@ async def handle_request(_orchestrator: AgentSquad, _user_input: str, _user_id: 
 
 
 if __name__ == "__main__":
-    import nest_asyncio
-
     USER_ID = "user123"
     SESSION_ID = str(uuid.uuid4())
 
@@ -97,4 +103,3 @@ if __name__ == "__main__":
     # Run the async function
     loop = asyncio.get_event_loop()
     response = loop.run_until_complete(handle_request(orchestrator, user_input, USER_ID, SESSION_ID))
-

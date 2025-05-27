@@ -1,17 +1,13 @@
-import json
 from typing import AsyncIterable, Optional, Any, AsyncGenerator
-from typing import Any, AsyncIterable, Optional
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import re
 from anthropic import AsyncAnthropic, Anthropic
 from anthropic.types import Message
 from agent_squad.agents import Agent, AgentOptions, AgentStreamResponse
-from agent_squad.types import (ConversationMessage,
-                       ParticipantRole,
-                       TemplateVariables,
-                       AgentProviderType)
+from agent_squad.types import ConversationMessage, ParticipantRole, TemplateVariables, AgentProviderType
 from agent_squad.utils import Logger, AgentTools, AgentTool
 from agent_squad.retrievers import Retriever
+
 
 @dataclass
 class AnthropicAgentOptions(AgentOptions):
@@ -23,7 +19,7 @@ class AnthropicAgentOptions(AgentOptions):
     retriever: Optional[Retriever] = None
     tool_config: Optional[dict[str, Any] | AgentTools] = None
     custom_system_prompt: Optional[dict[str, Any]] = None
-
+    thinking: Optional[dict[str, Any]] = None
 
 
 class AnthropicAgent(Agent):
@@ -49,25 +45,21 @@ class AnthropicAgent(Agent):
             else:
                 self.client = Anthropic(api_key=options.api_key)
 
-        self.system_prompt = ''
+        self.system_prompt = ""
         self.custom_variables = {}
 
         self.default_max_recursions: int = 5
 
         self.model_id = options.model_id
 
-        default_inference_config = {
-            'maxTokens': 1000,
-            'temperature': 0.1,
-            'topP': 0.9,
-            'stopSequences': []
-        }
+        default_inference_config = {"maxTokens": 1000, "temperature": 0.1, "topP": 0.9, "stopSequences": []}
 
         if options.inference_config:
             self.inference_config = {**default_inference_config, **options.inference_config}
         else:
             self.inference_config = default_inference_config
 
+        self.thinking = options.thinking if options.thinking else None
         self.retriever = options.retriever
         self.tool_config: Optional[dict[str, Any]] = options.tool_config
 
@@ -95,8 +87,7 @@ class AnthropicAgent(Agent):
 
         if options.custom_system_prompt:
             self.set_system_prompt(
-                options.custom_system_prompt.get('template'),
-                options.custom_system_prompt.get('variables')
+                options.custom_system_prompt.get("template"), options.custom_system_prompt.get("variables")
             )
 
     def is_streaming_enabled(self) -> bool:
@@ -114,15 +105,16 @@ class AnthropicAgent(Agent):
 
         return system_prompt
 
-    def _prepare_conversation(
-        self,
-        input_text: str,
-        chat_history: list[ConversationMessage]
-    ) -> list[Any]:
+    def _prepare_conversation(self, input_text: str, chat_history: list[ConversationMessage]) -> list[Any]:
         """Prepare the conversation history with the new user message."""
 
-        messages = [{"role": "user" if msg.role == ParticipantRole.USER.value else "assistant",
-                     "content": msg.content[0]['text'] if msg.content else ''} for msg in chat_history]
+        messages = [
+            {
+                "role": "user" if msg.role == ParticipantRole.USER.value else "assistant",
+                "content": msg.content[0]["text"] if msg.content else "",
+            }
+            for msg in chat_history
+        ]
         messages.append({"role": "user", "content": input_text})
 
         return messages
@@ -135,27 +127,25 @@ class AnthropicAgent(Agent):
 
         if isinstance(self.tool_config["tool"], list):
             return [
-                    tool.to_claude_format() if isinstance(tool, AgentTool) else tool
-                    for tool in self.tool_config['tool']
-                ]
+                tool.to_claude_format() if isinstance(tool, AgentTool) else tool for tool in self.tool_config["tool"]
+            ]
 
         raise RuntimeError("Invalid tool config")
 
-    def _build_input(
-            self,
-            messages: list[Any],
-            system_prompt: str
-            ) -> dict:
+    def _build_input(self, messages: list[Any], system_prompt: str) -> dict:
         """Build the conversation command with all necessary configurations."""
         input = {
             "model": self.model_id,
-            "max_tokens": self.inference_config.get('maxTokens'),
+            "max_tokens": self.inference_config.get("maxTokens"),
             "messages": messages,
             "system": system_prompt,
-            "temperature": self.inference_config.get('temperature'),
-            "top_p": self.inference_config.get('topP'),
-            "stop_sequences": self.inference_config.get('stopSequences'),
+            "temperature": self.inference_config.get("temperature"),
+            "top_p": self.inference_config.get("topP"),
+            "stop_sequences": self.inference_config.get("stopSequences"),
         }
+        
+        if self.thinking:
+            input["thinking"] = self.thinking
 
         if self.tool_config:
             input["tools"] = self._prepare_tool_config()
@@ -166,14 +156,10 @@ class AnthropicAgent(Agent):
         """Get the maximum number of recursions based on tool configuration."""
         if not self.tool_config:
             return 1
-        return self.tool_config.get('toolMaxRecursions', self.default_max_recursions)
+        return self.tool_config.get("toolMaxRecursions", self.default_max_recursions)
 
     async def _handle_streaming(
-        self,
-        input: dict,
-        messages: list[Any],
-        max_recursions: int,
-        agent_tracking_info: dict[str, Any] | None = None
+        self, input: dict, messages: list[Any], max_recursions: int, agent_tracking_info: dict[str, Any] | None = None
     ) -> AsyncIterable[Any]:
         """Handle streaming response processing with tool recursion."""
         continue_with_tools = True
@@ -187,14 +173,16 @@ class AnthropicAgent(Agent):
 
                 async for chunk in response:
                     if chunk.final_message:
-                        final_response = chunk.final_message # do not yield the full message as it need to be converted in Conversation Message
+                        final_response = (
+                            chunk.final_message
+                        )  # do not yield the full message as it need to be converted in Conversation Message
                     else:
                         yield chunk
 
-                if any('tool_use' in content.type for content in final_response.content):
-                    input['messages'].append({"role": "assistant", "content": final_response.content})
+                if any("tool_use" in content.type for content in final_response.content):
+                    input["messages"].append({"role": "assistant", "content": final_response.content})
                     tool_response = await self._process_tool_block(final_response, messages, agent_tracking_info)
-                    input['messages'].append(tool_response)
+                    input["messages"].append(tool_response)
                 else:
                     continue_with_tools = False
                     # yield last message
@@ -202,22 +190,22 @@ class AnthropicAgent(Agent):
                         "agent_name": self.name,
                         "response": final_response,
                         "messages": messages,
-                        "agent_tracking_info": agent_tracking_info
+                        "agent_tracking_info": agent_tracking_info,
                     }
                     await self.callbacks.on_agent_end(**kwargs)
 
-                    yield AgentStreamResponse(final_message=ConversationMessage(role=ParticipantRole.ASSISTANT.value, content=[{"text": final_response.content[0].text}]))
+                    yield AgentStreamResponse(
+                        final_message=ConversationMessage(
+                            role=ParticipantRole.ASSISTANT.value, content=[{"text": final_response.content[0].text}]
+                        )
+                    )
 
                 max_recursions -= 1
 
         return stream_generator()
 
     async def _process_with_strategy(
-        self,
-        streaming: bool,
-        input: dict,
-        messages: list[Any],
-        agent_tracking_info: dict[str, Any] | None = None
+        self, streaming: bool, input: dict, messages: list[Any], agent_tracking_info: dict[str, Any] | None = None
     ) -> ConversationMessage | AsyncIterable[Any]:
         """Process the request using the specified strategy."""
 
@@ -231,33 +219,30 @@ class AnthropicAgent(Agent):
             "agent_name": self.name,
             "response": response,
             "messages": messages,
-            "agent_tracking_info": agent_tracking_info
+            "agent_tracking_info": agent_tracking_info,
         }
         await self.callbacks.on_agent_end(**kwargs)
         return response
 
-    async def _process_tool_block(self, llm_response: Any, conversation: list[Any], agent_tracking_info: dict[str, Any] | None = None) -> (Any):
-        if 'useToolHandler' in  self.tool_config:
+    async def _process_tool_block(
+        self, llm_response: Any, conversation: list[Any], agent_tracking_info: dict[str, Any] | None = None
+    ) -> Any:
+        if "useToolHandler" in self.tool_config:
             # tool process logic is handled elsewhere
-            tool_response = await self.tool_config['useToolHandler'](llm_response, conversation)
+            tool_response = await self.tool_config["useToolHandler"](llm_response, conversation)
         else:
             # tool process logic is handled in AgentTools class
-            if isinstance(self.tool_config['tool'], AgentTools):
-                additional_params = {
-                    "agent_name": self.name,
-                    "agent_tracking_info": agent_tracking_info
-                }
-                tool_response = await self.tool_config['tool'].tool_handler(AgentProviderType.ANTHROPIC.value, llm_response, conversation, additional_params)
+            if isinstance(self.tool_config["tool"], AgentTools):
+                additional_params = {"agent_name": self.name, "agent_tracking_info": agent_tracking_info}
+                tool_response = await self.tool_config["tool"].tool_handler(
+                    AgentProviderType.ANTHROPIC.value, llm_response, conversation, additional_params
+                )
             else:
                 raise ValueError("You must use AgentTools class when not providing a custom tool handler")
         return tool_response
 
     async def _handle_single_response_loop(
-        self,
-        input: Any,
-        messages: list[Any],
-        max_recursions: int,
-        agent_tracking_info: dict[str, Any] | None = None
+        self, input: Any, messages: list[Any], max_recursions: int, agent_tracking_info: dict[str, Any] | None = None
     ) -> ConversationMessage:
         """Handle single response processing with tool recursion."""
 
@@ -265,21 +250,18 @@ class AnthropicAgent(Agent):
         llm_response = None
 
         while continue_with_tools and max_recursions > 0:
-            llm_response:Message = await self.handle_single_response(input)
-            if any('tool_use' in content.type for content in llm_response.content):
-                input['messages'].append({"role": "assistant", "content": llm_response.content})
+            llm_response: Message = await self.handle_single_response(input)
+            if any("tool_use" in content.type for content in llm_response.content):
+                input["messages"].append({"role": "assistant", "content": llm_response.content})
                 tool_response = await self._process_tool_block(llm_response, messages, agent_tracking_info)
-                input['messages'].append(tool_response)
+                input["messages"].append(tool_response)
             else:
                 continue_with_tools = False
-                if llm_response.content:
-                    text_response  = llm_response.content[0].text
-                else:
-                    text_response = 'No final response generated'
+                llm_content = llm_response.content or [{"text": "No final response generated"}]
 
             max_recursions -= 1
 
-        return ConversationMessage(role=ParticipantRole.ASSISTANT.value, content=[{"text": text_response}])
+        return ConversationMessage(role=ParticipantRole.ASSISTANT.value, content=llm_content)
 
     async def process_request(
         self,
@@ -287,16 +269,15 @@ class AnthropicAgent(Agent):
         user_id: str,
         session_id: str,
         chat_history: list[ConversationMessage],
-        additional_params: Optional[dict[str, str]] = None
+        additional_params: Optional[dict[str, str]] = None,
     ) -> ConversationMessage | AsyncIterable[Any]:
-
         kwargs = {
-            'agent_name': self.name,
-            'input': input_text,
-            'messages': [*chat_history],
-            'additional_params': additional_params,
-            'user_id': user_id,
-            'session_id': session_id
+            "agent_name": self.name,
+            "input": input_text,
+            "messages": [*chat_history],
+            "additional_params": additional_params,
+            "user_id": user_id,
+            "session_id": session_id,
         }
         agent_tracking_info = await self.callbacks.on_agent_start(**kwargs)
 
@@ -308,25 +289,25 @@ class AnthropicAgent(Agent):
 
     async def handle_single_response(self, input_data: dict) -> Any:
         try:
-            await self.callbacks.on_llm_start(self.name, input=input_data.get('messages')[-1], **input_data)
-            response:Message = self.client.messages.create(**input_data)
+            await self.callbacks.on_llm_start(self.name, input=input_data.get("messages")[-1], **input_data)
+            response: Message = self.client.messages.create(**input_data)
 
             kwargs = {
-                'usage':{
-                    'inputTokens':response.usage.input_tokens,
-                    'outputTokens':response.usage.output_tokens,
-                    'totalTokens':response.usage.input_tokens + response.usage.output_tokens
+                "usage": {
+                    "inputTokens": response.usage.input_tokens,
+                    "outputTokens": response.usage.output_tokens,
+                    "totalTokens": response.usage.input_tokens + response.usage.output_tokens,
                 },
-                'input': {
-                    'modelId': response.model,
-                    'messages': input_data.get('messages'),
-                    'system': input_data.get('system'),
+                "input": {
+                    "modelId": response.model,
+                    "messages": input_data.get("messages"),
+                    "system": input_data.get("system"),
                 },
-                'inferenceConfig':{
-                    "temperature": input_data.get('temperature'),
-                    "top_p": input_data.get('top_p'),
-                    "stop_sequences": input_data.get('stop_sequences'),
-                }
+                "inferenceConfig": {
+                    "temperature": input_data.get("temperature"),
+                    "top_p": input_data.get("top_p"),
+                    "stop_sequences": input_data.get("stop_sequences"),
+                },
             }
             await self.callbacks.on_llm_end(self.name, output=response.content, **kwargs)
 
@@ -339,47 +320,66 @@ class AnthropicAgent(Agent):
         message = {}
         content = []
         accumulated = {}
-        message['content'] = content
+        message["content"] = content
 
         try:
-            await self.callbacks.on_llm_start(self.name, input=input.get('messages')[-1], **input)
+            await self.callbacks.on_llm_start(self.name, input=input.get("messages")[-1], **input)
             async with self.client.messages.stream(**input) as stream:
                 async for event in stream:
-                    if event.type == "text":
+                    if event.type == "thinking":
+                        await self.callbacks.on_llm_new_token(event.thinking, thinking=True)
+                        yield AgentStreamResponse(text=event.thinking)
+                    elif event.type == "text":
                         await self.callbacks.on_llm_new_token(event.text)
                         yield AgentStreamResponse(text=event.text)
+                    elif event.type == "content_block_delta":
+                        if hasattr(event.delta, 'text'):
+                            await self.callbacks.on_llm_new_token(event.delta.text)
+                            yield AgentStreamResponse(text=event.delta.text)
                     elif event.type == "content_block_stop":
-                        recursions = 0
                         break
+                    # Handle any other event types we might be missing
+                    else:
+                        if hasattr(event, 'text'):
+                            await self.callbacks.on_llm_new_token(event.text)
+                            yield AgentStreamResponse(text=event.text)
 
                 # you can still get the accumulated final message outside of
                 # the context manager, as long as the entire stream was consumed
                 # inside of the context manager
 
-                accumulated:Message = await stream.get_final_message()
+                accumulated: Message = await stream.get_final_message()
+            
+            # Extract and yield text content from final message if it exists
+            if accumulated and accumulated.content:
+                for content_block in accumulated.content:
+                    if hasattr(content_block, 'text') and content_block.text:
+                        # This is the actual response text that comes after thinking
+                        await self.callbacks.on_llm_new_token(content_block.text)
+                        yield AgentStreamResponse(text=content_block.text)
+            
             # we need to yield the whole content to keep the tool use block
             yield AgentStreamResponse(
-                final_message=ConversationMessage(role=ParticipantRole.ASSISTANT.value,
-                                                  content=accumulated.content))
-
+                final_message=ConversationMessage(role=ParticipantRole.ASSISTANT.value, content=accumulated.content)
+            )
 
             kwargs = {
-                'usage':{
-                    'inputTokens':accumulated.usage.input_tokens,
-                    'outputTokens':accumulated.usage.output_tokens,
-                    'totalTokens':accumulated.usage.input_tokens + accumulated.usage.output_tokens
+                "usage": {
+                    "inputTokens": accumulated.usage.input_tokens,
+                    "outputTokens": accumulated.usage.output_tokens,
+                    "totalTokens": accumulated.usage.input_tokens + accumulated.usage.output_tokens,
                 },
-                'input': {
-                    'modelId': accumulated.model,
-                    'messages': input.get('messages'),
-                    'system': input.get('system'),
+                "input": {
+                    "modelId": accumulated.model,
+                    "messages": input.get("messages"),
+                    "system": input.get("system"),
                 },
-                'inferenceConfig':{
-                    "temperature": input.get('temperature'),
-                    "top_p": input.get('top_p'),
-                    "stop_sequences": input.get('stop_sequences'),
-                    "max_tokens": input.get('max_tokens')
-                }
+                "inferenceConfig": {
+                    "temperature": input.get("temperature"),
+                    "top_p": input.get("top_p"),
+                    "stop_sequences": input.get("stop_sequences"),
+                    "max_tokens": input.get("max_tokens"),
+                },
             }
             await self.callbacks.on_llm_end(self.name, output=accumulated, **kwargs)
 
@@ -387,10 +387,7 @@ class AnthropicAgent(Agent):
             Logger.error(f"Error getting stream from Anthropic model: {str(error)}")
             raise error
 
-
-    def set_system_prompt(self,
-                          template: Optional[str] = None,
-                          variables: Optional[TemplateVariables] = None) -> None:
+    def set_system_prompt(self, template: Optional[str] = None, variables: Optional[TemplateVariables] = None) -> None:
         if template:
             self.prompt_template = template
         if variables:
@@ -407,7 +404,7 @@ class AnthropicAgent(Agent):
             key = match.group(1)
             if key in variables:
                 value = variables[key]
-                return '\n'.join(value) if isinstance(value, list) else str(value)
+                return "\n".join(value) if isinstance(value, list) else str(value)
             return match.group(0)
 
-        return re.sub(r'{{(\w+)}}', replace, template)
+        return re.sub(r"{{(\w+)}}", replace, template)
