@@ -173,13 +173,11 @@ class AnthropicAgent(Agent):
 
                 async for chunk in response:
                     if chunk.final_message:
-                        final_response = (
-                            chunk.final_message
-                        )  # do not yield the full message as it need to be converted in Conversation Message
+                        final_response = chunk.final_message
                     else:
                         yield chunk
 
-                if any("tool_use" in content.type for content in final_response.content):
+                if final_response and any(hasattr(content, 'type') and content.type == "tool_use" for content in final_response.content):
                     input["messages"].append({"role": "assistant", "content": final_response.content})
                     tool_response = await self._process_tool_block(final_response, messages, agent_tracking_info)
                     input["messages"].append(tool_response)
@@ -196,7 +194,8 @@ class AnthropicAgent(Agent):
 
                     yield AgentStreamResponse(
                         final_message=ConversationMessage(
-                            role=ParticipantRole.ASSISTANT.value, content=[{"text": final_response.content[0].text}]
+                            role=ParticipantRole.ASSISTANT.value, 
+                            content=[{"text": content.text if hasattr(content, 'text') else ""} for content in final_response.content]
                         )
                     )
 
@@ -248,10 +247,11 @@ class AnthropicAgent(Agent):
 
         continue_with_tools = True
         llm_response = None
+        llm_content = None
 
         while continue_with_tools and max_recursions > 0:
             llm_response: Message = await self.handle_single_response(input)
-            if any("tool_use" in content.type for content in llm_response.content):
+            if any(hasattr(content, 'type') and content.type == "tool_use" for content in llm_response.content):
                 input["messages"].append({"role": "assistant", "content": llm_response.content})
                 tool_response = await self._process_tool_block(llm_response, messages, agent_tracking_info)
                 input["messages"].append(tool_response)
@@ -337,30 +337,21 @@ class AnthropicAgent(Agent):
                             await self.callbacks.on_llm_new_token(event.delta.text)
                             yield AgentStreamResponse(text=event.delta.text)
                     elif event.type == "content_block_stop":
-                        break
+                        pass
                     # Handle any other event types we might be missing
                     else:
                         if hasattr(event, 'text'):
                             await self.callbacks.on_llm_new_token(event.text)
                             yield AgentStreamResponse(text=event.text)
 
-                # you can still get the accumulated final message outside of
-                # the context manager, as long as the entire stream was consumed
-                # inside of the context manager
-
+                # Get the accumulated final message after consuming the stream
                 accumulated: Message = await stream.get_final_message()
             
-            # Extract and yield text content from final message if it exists
-            if accumulated and accumulated.content:
-                for content_block in accumulated.content:
-                    if hasattr(content_block, 'text') and content_block.text:
-                        # This is the actual response text that comes after thinking
-                        await self.callbacks.on_llm_new_token(content_block.text)
-                        yield AgentStreamResponse(text=content_block.text)
-            
-            # we need to yield the whole content to keep the tool use block
+            # We need to yield the whole content to keep the tool use block
+            # This should be a single yield with the final message
             yield AgentStreamResponse(
-                final_message=ConversationMessage(role=ParticipantRole.ASSISTANT.value, content=accumulated.content)
+                text="",  # Empty text for the final chunk
+                final_message=accumulated
             )
 
             kwargs = {
